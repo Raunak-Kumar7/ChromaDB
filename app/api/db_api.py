@@ -4,8 +4,7 @@ from app.chromadb.chromaClient import ChromaCollector
 from app.utils.data_processor import process_and_add_to_collector
 import app.utils.parameters as parameters
 from app.models.request_models import AddRequest, DeleteRequest, GetRequest, AllOpsRequest
-
-
+import time
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
@@ -71,6 +70,7 @@ def all_operations(request: AllOpsRequest):
     3. Delete data
     4. Clear data
     '''
+    start_time = time.time()
     # TODO: Check if we can remove clear, this lock is needed for clear. If we are able to remove clear we can make this api server async.(but still this would require removing locks from the indiviidal DB Operations.)
     # Reason of using clear : Delete API does not free up storage.
 
@@ -97,7 +97,7 @@ def all_operations(request: AllOpsRequest):
                 # Step 3 & 4: Delete and Clear Data
                 collector.delete(ids_to_delete=None, where=request.metadata)
                 collector.clear()  
-                logger.info(f"Data successfully deleted and cleared for {logfileurl}")
+                logger.info(f"Data successfully deleted and cleared for {logfileurl} | Time taken: {time.time() - start_time:.4f} seconds")
             except Exception as cleanup_error:
                 logger.error(f"Cleanup failed: {cleanup_error} for {logfileurl}")
 

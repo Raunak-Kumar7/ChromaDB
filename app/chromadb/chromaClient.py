@@ -4,7 +4,8 @@ import threading
 import numpy as np
 import chromadb
 from chromadb.config import Settings
-from chromadb.utils import embedding_functions
+# from chromadb.utils import embedding_functions
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from app.utils.util import encode, decode
 from collections import OrderedDict
 import app.utils.parameters as parameters
@@ -16,8 +17,20 @@ setup_logging()
 logger = logging.getLogger(__name__)
 logger.info("Starting the application.")
 
-embedder = embedding_functions.SentenceTransformerEmbeddingFunction("sentence-transformers/all-mpnet-base-v2")
 
+# embedder = embedding_functions.SentenceTransformerEmbeddingFunction("sentence-transformers/all-mpnet-base-v2")
+# Custom function to disable Progress_bars in logs
+class CustomSentenceTransformerEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ValueError("The sentence_transformers python package is not installed. Please install it with `pip install sentence_transformers`")
+        self._model = SentenceTransformer(model_name)
+
+    def __call__(self, texts: Documents) -> Embeddings:
+        return self._model.encode(list(texts), convert_to_numpy=True, show_progress_bar=False).tolist()
+embedder = CustomSentenceTransformerEmbeddingFunction("sentence-transformers/all-mpnet-base-v2")
 
 class Info:
     '''
