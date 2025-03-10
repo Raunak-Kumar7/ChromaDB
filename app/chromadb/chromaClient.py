@@ -44,23 +44,7 @@ class Info:
         Returns the minimum distance from Search String between the two Info objects.
         '''
         if parameters.get_new_dist_strategy() == parameters.DIST_MIN_STRATEGY:
-            # Min
             return min(self.distance, other_info.distance)
-        
-        # Default is DIST_MIN_STRATEGY
-        # --------------------------------------------------------------------------------------------
-        # elif parameters.get_new_dist_strategy() == parameters.DIST_HARMONIC_STRATEGY:
-        #     # Harmonic mean
-        #     return 2 * (self.distance * other_info.distance) / (self.distance + other_info.distance)
-        # elif parameters.get_new_dist_strategy() == parameters.DIST_GEOMETRIC_STRATEGY:
-        #     # Geometric mean
-        #     return (self.distance * other_info.distance) ** 0.5
-        # elif parameters.get_new_dist_strategy() == parameters.DIST_ARITHMETIC_STRATEGY:
-        #     # Arithmetic mean
-        #     return (self.distance + other_info.distance) / 2
-        # else:  # Min is default
-        #     return min(self.distance, other_info.distance)
-        # --------------------------------------------------------------------------------------------
 
     def merge_with(self, other_info):
         '''
@@ -110,8 +94,8 @@ class Info:
 
 class ChromaCollector():
     '''
-    What is ChromaCollector Class?
-
+    ChromaCollector is a class which handles all the ChromaDB operations.
+    ChromaDB is running as a in memory DB via chromadb python package.
     '''
 
     def __init__(self) -> None:
@@ -120,7 +104,7 @@ class ChromaCollector():
         self.chroma_client = chromadb.Client(settings=Settings(allow_reset=True, anonymized_telemetry=False))
 
 
-        # Create A new Collection (1 collection per client for now)
+        # Create A new Collection (1 collection per client)
         self.collection_name = "context"
         self.collection = self.chroma_client.create_collection(name=self.collection_name, embedding_function=embedder)
 
@@ -133,82 +117,23 @@ class ChromaCollector():
         # Locking so the server doesn't break.
         # lock (self.lock) is shared across all the methods.
         # If multiple API calls are handled by different threads within the same server process, the self.lock will ensure that only one API request at a time enters the critical section.
-        # Relying on API level Lock
+
         self.lock = threading.Lock()
 
-
-    # Main function to add documents to the collection
-    def add(self, texts: list[str], texts_with_context: list[str], starting_indices: list[int], metadatas: list[dict] = None):
+    def _get_new_ids(self, num_new_ids: int):
         '''
-        Params:
-            text: list of Chunks broken by data_processor.py
-            text_with_context: list of same Chunks with some left and right context.
-            starting_indices: list of starting index of each respective chunk
-            metadata: list of SAME metadata for each of the chunk.
-        Adds the chunks to the ChromaDB collection.
+        Param:
+            num_new_ids: No. of new ids need to be generated
+        To generate new unique ID for each Chunk stored in ChromaDB
         '''
-        # Relying on API level Lock
-        # with self.lock: 
-            # Ensure that if metadata is provided, it matches the number of text chunks or is NONE
-        logger.info(f"Adding {len(texts)} chunks to ChromaDB")  # Log input data
-        if metadatas is not None and len(metadatas) != len(texts):
-            logger.error(f"Metadata length mismatch! metadatas={len(metadatas)}, texts={len(texts)}")
-            raise ValueError("metadatas must be None or have the same length as texts")
+        # STEP 1: Find out the Highest ID stored in self.ids
+        if self.ids:
+            max_existing_id = max(int(id_) for id_ in self.ids)
+        else:
+            max_existing_id = -1
 
-        # Exit if no chunks passed.
-        if len(texts) == 0:
-            logger.warning("No texts provided for addition. Skipping add operation.")
-            return
-        
-        logger.info("Generating new unique IDs...")
-        # Generate list of unique ID for each Chunk.
-        new_ids = self._get_new_ids(len(texts))
-        logger.info(f"Generated {len(new_ids)} new IDs: {new_ids[:5]}...") 
-        
-        logger.info("Splitting texts by cache hit...")
-        # Separates already cached and non-cached texts.
-        (existing_texts, existing_embeddings, existing_ids, existing_metas), \
-            (non_existing_texts, non_existing_ids, non_existing_metas) = self._split_texts_by_cache_hit(texts, new_ids, metadatas)
-        
-        logger.debug(f"Existing: {len(existing_texts)}, Non-existing: {len(non_existing_texts)}")
-        
-        # STEP: Add Already Cached Embeddings [all at once]
-        # If there are any already existing texts, add them all at once.
-        if existing_texts:
-            logger.info(f'Adding {len(existing_embeddings)} cached embeddings.')
-            args = {'embeddings': existing_embeddings, 'documents': existing_texts, 'ids': existing_ids}
-            if metadatas is not None:
-                args['metadatas'] = existing_metas
-            logger.info("Before calling self.collection.add() for cached embeddings")
-            self.collection.add(**args)
-            logger.info("After calling self.collection.add() for cached embeddings")
-
-        # STEP: Add Non-Cached Embeddings [all at once]
-        # If there are any non-existing texts, compute their embeddings all at once. Each call to embed has significant overhead.
-        if non_existing_texts:
-            non_existing_embeddings = embedder(non_existing_texts) # batch-processes non_existing_texts, which takes a list of texts and returns a list of corresponding embeddings.
-            for text, embedding in zip(non_existing_texts, non_existing_embeddings):
-                if len(self.embeddings_cache) >= self.max_cache_size:
-                    self.embeddings_cache.popitem(last=False) # O(1) operation, Keeps the Cache from growing infinetly
-                self.embeddings_cache[text] = embedding # Stores new embeddings in self.embeddings_cache to avoid recomputation in the future.
-
-            logger.info(f'Adding {len(non_existing_embeddings)} new embeddings.')
-            args = {'embeddings': non_existing_embeddings, 'documents': non_existing_texts, 'ids': non_existing_ids}
-            if metadatas is not None:
-                args['metadatas'] = non_existing_metas
-            logger.info("Before calling self.collection.add() for non-cached embeddings")
-            self.collection.add(**args)
-            logger.info("After calling self.collection.add() for non-cached embeddings")
-
-        # STEP: Create a dictionary that maps each ID to its context and starting index
-        new_info = {
-            id_: {'text_with_context': context, 'start_index': start_index}
-            for id_, context, start_index in zip(new_ids, texts_with_context, starting_indices)
-        }
-
-        self.id_to_info.update(new_info) # Updates the Dict, prevents duplicate keys.
-        self.ids.extend(new_ids)
-        self.embeddings_cache.clear() # Data not shared accross api calls, so clearing it.
+        # STEP 2: Creates and returns a list of new unique IDs
+        return [str(i + max_existing_id + 1) for i in range(num_new_ids)]
 
     def _split_texts_by_cache_hit(self, texts: list[str], new_ids: list[str], metadatas: list[dict]):
         '''
@@ -243,56 +168,68 @@ class ChromaCollector():
         return (existing_texts, existing_embeddings, existing_ids, existing_metas), \
                (non_existing_texts, non_existing_ids, non_existing_metas)
 
-
-    def _get_new_ids(self, num_new_ids: int):
+    # Main function to add documents to the collection
+    def add(self, texts: list[str], texts_with_context: list[str], starting_indices: list[int], metadatas: list[dict] = None):
         '''
-        Param:
-            num_new_ids: No. of new ids need to be generated
-        To generate new unique ID for each Chunk stored in ChromaDB
+        Params:
+            text: list of Chunks broken by data_processor.py
+            text_with_context: list of same Chunks with some left and right context.
+            starting_indices: list of starting index of each respective chunk
+            metadata: list of SAME metadata for each of the chunk.
+        Adds the chunks to the ChromaDB collection.
         '''
-        # STEP 1: Find out the Highest ID stored in self.ids
-        if self.ids:
-            max_existing_id = max(int(id_) for id_ in self.ids)
-        else:
-            max_existing_id = -1
 
-        # STEP 2: Creates and returns a list of new unique IDs
-        return [str(i + max_existing_id + 1) for i in range(num_new_ids)]
+        # Ensure that if metadata is provided, it matches the number of text chunks or is NONE
+        if metadatas is not None and len(metadatas) != len(texts):
+            logger.error(f"Metadata length mismatch! metadatas={len(metadatas)}, texts={len(texts)}")
+            raise ValueError("metadatas must be None or have the same length as texts")
 
-    # Don't need time based weighing,(everything is important in logs)
-    # ------------------------------------------------------------------------------------
-    # def _find_min_max_start_index(self):
-    #     max_index, min_index = 0, float('inf')
-    #     for _, val in self.id_to_info.items():
-    #         if val['start_index'] > max_index:
-    #             max_index = val['start_index']
-    #         if val['start_index'] < min_index:
-    #             min_index = val['start_index']
-    #     return min_index, max_index
-    
-    # def _apply_sigmoid_time_weighing(self, infos: list[Info], document_len: int, time_steepness: float, time_power: float):
-    #     '''
-    #     It applies a time-dependent weighting to a list of objects, making later parts of the document more influential than earlier ones.
-    #     •	Early sections of the document get lower weights.
-    #     •	Later sections get higher weights.
-    #     '''
-    #     def sigmoid(x):
-    #         return 1 / (1 + np.exp(-x))
+        # Exit if no chunks passed.
+        if len(texts) == 0:
+            logger.warning("No texts provided for addition. Skipping add operation.")
+            return
+        
+        # Generate list of unique ID for each Chunk.
+        new_ids = self._get_new_ids(len(texts))
+        
+        # Separates already cached and non-cached texts.
+        (existing_texts, existing_embeddings, existing_ids, existing_metas), \
+            (non_existing_texts, non_existing_ids, non_existing_metas) = self._split_texts_by_cache_hit(texts, new_ids, metadatas)
+                
+        # STEP: Add Already Cached Embeddings [all at once]
+        # If there are any already existing texts, add them all at once.
+        if existing_texts:
+            logger.info(f'Adding {len(existing_embeddings)} cached embeddings.')
+            args = {'embeddings': existing_embeddings, 'documents': existing_texts, 'ids': existing_ids}
+            if metadatas is not None:
+                args['metadatas'] = existing_metas
+            self.collection.add(**args)
 
-    #     weights = sigmoid(time_steepness * np.linspace(-10, 10, document_len))
+        # STEP: Add Non-Cached Embeddings [all at once]
+        # If there are any non-existing texts, compute their embeddings all at once. Each call to embed has significant overhead.
+        if non_existing_texts:
+            non_existing_embeddings = embedder(non_existing_texts) # batch-processes non_existing_texts, which takes a list of texts and returns a list of corresponding embeddings.
+            for text, embedding in zip(non_existing_texts, non_existing_embeddings):
+                if len(self.embeddings_cache) >= self.max_cache_size:
+                    self.embeddings_cache.popitem(last=False) # O(1) operation, Keeps the Cache from growing infinetly
+                self.embeddings_cache[text] = embedding # Stores new embeddings in self.embeddings_cache to avoid recomputation in the future.
 
-    #     # Scale to [0,time_power] and shift it up to [1-time_power, 1]
-    #     weights = weights - min(weights)
-    #     weights = weights * (time_power / max(weights))
-    #     weights = weights + (1 - time_power)
+            logger.info(f'Adding {len(non_existing_embeddings)} new embeddings.')
+            args = {'embeddings': non_existing_embeddings, 'documents': non_existing_texts, 'ids': non_existing_ids}
+            if metadatas is not None:
+                args['metadatas'] = non_existing_metas
+            self.collection.add(**args)
 
-    #     # Reverse the weights
-    #     weights = weights[::-1]
+        # STEP: Create a dictionary that maps each ID to its context and starting index
+        new_info = {
+            id_: {'text_with_context': context, 'start_index': start_index}
+            for id_, context, start_index in zip(new_ids, texts_with_context, starting_indices)
+        }
 
-    #     for info in infos:
-    #         index = info.start_index
-    #         info.distance *= weights[index]
-    # ------------------------------------------------------------------------------------
+        self.id_to_info.update(new_info) # Updates the Dict, prevents duplicate keys.
+        self.ids.extend(new_ids)
+        self.embeddings_cache.clear() # Data not shared accross api calls, so clearing it.
+
 
     def _filter_outliers_by_median_distance(self, infos: list[Info], significant_level: float):
         '''
@@ -365,10 +302,6 @@ class ChromaCollector():
             search_strings = [search_strings]
 
         infos = []
-        # Don't need time based weighing,(everything is important in logs)
-        # ------------------------------------------------------------------------------------
-        # min_start_index, max_start_index = self._find_min_max_start_index()
-        # ------------------------------------------------------------------------------------
 
         for search_string in search_strings:
 
@@ -383,10 +316,6 @@ class ChromaCollector():
                                distance=distance, id=id)
                           for id, distance in zip(result['ids'][0], result['distances'][0])] #  Extracts results and converts them into Info objects.
 
-            # Don't need time based weighing,(everything is important in logs)
-            # ------------------------------------------------------------------------------------
-            # self._apply_sigmoid_time_weighing(infos=curr_infos, document_len=max_start_index - min_start_index + 1, time_steepness=parameters.get_time_steepness(), time_power=parameters.get_time_power())
-            # ------------------------------------------------------------------------------------
             curr_infos = self._filter_outliers_by_median_distance(curr_infos, parameters.get_significant_level())   # Removes info that have a distance greater than the median by a significant level.
             infos.extend(curr_infos)
 
@@ -400,29 +329,6 @@ class ChromaCollector():
         distances = [inf.distance for inf in infos]
 
         return texts_with_context, ids, distances
-    
-
-    # Get chunks by similarity
-    # Not used in the current implementation
-    # --------------------------------------------------------------------------------------------
-    # def get(self, search_strings: list[str], n_results: int) -> list[str]:
-    #     '''
-    #     '''
-    #     with self.lock:
-    #         documents, _, _ = self._get_documents_ids_distances(search_strings, n_results)
-    #         return documents
-    # --------------------------------------------------------------------------------------------
-
-    # Sorting by distance only
-    # --------------------------------------------------------------------------------------------
-    # Get ids by similarity
-    # def get_ids(self, search_strings: list[str], n_results: int) -> list[str]:
-    #     with self.lock:
-    #         _, ids, _ = self._get_documents_ids_distances(search_strings, n_results)
-    #         return ids
-    # --------------------------------------------------------------------------------------------
-
-    # Cutoff token count
 
     def _get_documents_up_to_token_count(self, documents: list[str], max_token_count: int):
         '''
@@ -450,21 +356,8 @@ class ChromaCollector():
             else:
                 return_documents.append(doc)
                 current_token_count += doc_token_count
-        logger.info('Successfully cut the context upto Context Length')
         return return_documents
-    
-    # Sorting by distance only
-    # --------------------------------------------------------------------------------------------
-    # Get chunks by similarity and then sort by ids
-    # def get_sorted_by_ids(self, search_strings: list[str], n_results: int, max_token_count: int, metadata: dict = None) -> list[str]:
-    #     with self.lock:
-    #         documents, ids, _ = self._get_documents_ids_distances(search_strings, n_results, metadata=metadata)
-    #         sorted_docs = [x for _, x in sorted(zip(ids, documents))]
 
-    #         return self._get_documents_up_to_token_count(sorted_docs, max_token_count)
-    # --------------------------------------------------------------------------------------------
-
-    # Get chunks by similarity and then sort by distance (lowest distance is last).
     def get_sorted_by_dist(self, search_strings: list[str], n_results: int, max_token_count: int, metadata: dict = None) -> list[str]:
         '''
         Params:
@@ -472,12 +365,10 @@ class ChromaCollector():
             - n_results: Number of Chunks to return. "default": 250
             - max_token_count: Maximum token count allowed for retrieval.
             - metadata: Metadata to filter the search results.
-        
+        Main function to get chunks by similarity and then sort by distance (lowest distance is last).
         Retrieves, sorts, truncates, and returns documents based on their distance scores while ensuring they fit within a given token limit.
 
         '''
-        # Relying on API level Lock
-        # with self.lock:
         # Retrieves documents matching search_strings and their corresponding distances, Uses n_results to limit how many chunks to retrieve.
         documents, _, distances = self._get_documents_ids_distances(search_strings, n_results, metadata=metadata)
         # Sorts them in ascending order (closest match first).
@@ -498,14 +389,8 @@ class ChromaCollector():
         '''
         Deleting records based on where(metadata) solely
         '''
-        # Relying on API level Lock
-        # with self.lock:
-        # No Need to find ids_to_delete as delete() will handle the where condition
-        # --------------------------------------------
         ids_to_delete = self.collection.get(ids=ids_to_delete, where=where)['ids'] # Fetches ids based on metadata
-        # --------------------------------------------
         self.collection.delete(ids=ids_to_delete, where=where)
-        logger.info("Deleted")
         # Remove the deleted ids from self.ids and self.id_to_info
         ids_set = set(ids_to_delete)
         self.ids = [id_ for id_ in self.ids if id_ not in ids_set]
@@ -519,8 +404,6 @@ class ChromaCollector():
         Resets the ChromaDB clients, and creates a new Collection
         Resets ids, id_to_info
         '''
-        # Relying on API level Lock
-        # with self.lock:
         self.chroma_client.reset()
         self.collection = self.chroma_client.create_collection("context", embedding_function=embedder)
         self.ids = []
@@ -532,8 +415,6 @@ class ChromaCollector():
         '''
         Returns count of embedding in the collection
         '''
-        # Relying on API level Lock
-        # with self.lock:
         count_of_embeddings = self.collection.count()
         logger.info(f'Number of Embeddings in the collection {count_of_embeddings}')
         return count_of_embeddings

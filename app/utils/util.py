@@ -1,5 +1,5 @@
 '''
-Find if tiktoken usage increases the memory usage.
+TODO: Find if tiktoken gradually increases the memory usage.
 Or if we can use any other way/lib to count the number of tokens.
 '''
 import tiktoken

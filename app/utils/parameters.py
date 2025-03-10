@@ -58,15 +58,10 @@ class Parameters:
         if Parameters._instance is not None:
             raise Exception("This class is a singleton!")
         else:
-            logger.info("Initializing Parameters singleton...")
+            logger.debug("Initializing Parameters singleton...")
             Parameters._instance = self
-            # self.hyperparameters = self._load_from_json(Path("/Users/rakumar/Projects/ChromaDB/app/config.json")) # Update with Relative Path
-            try:
-                self.hyperparameters = self._load_from_json(Path("/Users/rakumar/Projects/ChromaDB/app/config.json"))
-                logger.info("Successfully loaded config.json")  # ✅ If this prints, loading worked.
-            except Exception as e:
-                logger.error(f"Error loading config.json: {e}")  # 🚨 Check for JSON issues.
-                self.hyperparameters = {}
+            BASE_DIR = Path(__file__).resolve().parent.parent
+            self.hyperparameters = self._load_from_json(BASE_DIR / "config.json")
 
     def _load_from_json(self, file_path):
         logger.debug('Loading hyperparameters...')
