@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 import logging
 from app.chromadb.chromaClient import ChromaCollector
 from app.utils.data_processor import process_and_add_to_collector
@@ -7,7 +7,7 @@ from app.models.request_models import AddRequest, DeleteRequest, GetRequest, All
 import time
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+router = APIRouter()
 # singleton instance in your ChromaCollector class is to ensure that All requests to your ChromaDB server share the same instance of ChromaCollector. 
 # A singleton ensures only one connection is maintained.
 # The collector will be initialized as soon as your FastAPI app starts
@@ -15,7 +15,7 @@ collector = ChromaCollector()
 
 # Disable StandAlone API Calls, Locks Removed from individual API functions
 # ---------------------------------------------------------------------------------------------------------------
-# @app.post("/api/v1/add")
+# @router.post("/api/v1/add")
 # def add_data(request: AddRequest):
 #     try:
 #         process_and_add_to_collector(request.corpus, collector, request.clear_before_adding, request.metadata)
@@ -23,7 +23,7 @@ collector = ChromaCollector()
 #     except Exception as e:
 #         raise HTTPException(status_code=400, detail=str(e))
 
-# @app.post("/api/v1/get")
+# @router.post("/api/v1/get")
 # def get_data(request: GetRequest):
 #     try:
 #         n_results = request.n_results or parameters.get_chunk_count() # "default": 250,
@@ -34,7 +34,7 @@ collector = ChromaCollector()
 #     except Exception as e:
 #         raise HTTPException(status_code=400, detail=str(e))
 
-# @app.post("/api/v1/delete")
+# @router.post("/api/v1/delete")
 # def delete_data(request: DeleteRequest):
 #     try:
 #         collector.delete(ids_to_delete=None, where=request.metadata) # Deletion is based on Metadata only
@@ -42,7 +42,7 @@ collector = ChromaCollector()
 #     except Exception as e:
 #         raise HTTPException(status_code=400, detail=str(e))
 
-# @app.get("/api/v1/getcount")
+# @router.get("/api/v1/getcount")
 # def get_count():
 #     try:
 #         count_of_embeddings = collector.count()
@@ -50,7 +50,7 @@ collector = ChromaCollector()
 #     except Exception as e:
 #         raise HTTPException(status_code=400, detail=str(e))
 
-# @app.delete("/api/v1/clear")
+# @router.delete("/api/v1/clear")
 # def clear_data():
 #     try:
 #         collector.clear()
@@ -61,7 +61,7 @@ collector = ChromaCollector()
 
 
 
-@app.post("/api/v1/alloperations")
+@router.post("/api/v1/alloperations")
 def all_operations(request: AllOpsRequest):
     '''
     Performs all operations in one go
@@ -85,7 +85,7 @@ def all_operations(request: AllOpsRequest):
 
             # Step 2: Get Data
             n_results = request.n_results or parameters.get_chunk_count() # "default": 250,
-            max_token_count = request.max_token_count # or parameters.get_max_token_count()
+            max_token_count = request.max_token_count or parameters.get_max_token_count()
             results = collector.get_sorted_by_dist(request.search_strings, n_results, max_token_count, metadata=request.metadata)
             logger.info(f"Data successfully fetched for {logfileurl}")
             return {"results": results}
@@ -102,6 +102,6 @@ def all_operations(request: AllOpsRequest):
                 logger.error(f"Cleanup failed: {cleanup_error} for {logfileurl}")
 
 
-@app.get('/')
+@router.get('/')
 def health():
     return {'msg': 'Welcome To ChromaDB!'}

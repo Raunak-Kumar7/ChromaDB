@@ -27,18 +27,10 @@ class TextPreprocessorBuilder:
 
     def __init__(self, text: str):
         self.text = text
-    
-    def strip(self):
-        '''
-        STEP: 7
-        Remove leading and trailing spaces from the text.
-        '''
-        self.text = self.text.strip()
-        return self
         
     def remove_punctuation(self):
         '''
-        STEP: 2
+        STEP: 1
         Remove all punctuation from the text.
         '''
         self.text = self.text.translate(str.maketrans('', '', string.punctuation))
@@ -46,7 +38,7 @@ class TextPreprocessorBuilder:
 
     def lemmatize(self):
         '''
-        STEP: 5
+        STEP: 2
         '''
         processed_text = TextPreprocessorBuilder._lemmatizer_cache.get(self.text)
         if processed_text:
@@ -59,8 +51,16 @@ class TextPreprocessorBuilder:
 
         return self
 
+    def strip(self):
+        '''
+        STEP: 2
+        Remove leading and trailing spaces from the text.
+        '''
+        self.text = self.text.strip()
+        return self
+
     def build(self):
         '''
-        STEP: 9
+        STEP: 4
         '''
         return self.text
